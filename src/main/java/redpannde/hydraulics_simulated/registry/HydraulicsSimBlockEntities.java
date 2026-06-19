@@ -5,10 +5,10 @@ import com.tterrag.registrate.util.entry.BlockEntityEntry;
 import dev.simulated_team.simulated.index.SimPartialModels;
 import redpannde.hydraulics_simulated.HydraulicsSimulated;
 import redpannde.hydraulics_simulated.pistons.pneumatic_piston.PneumaticPistonBlockEntity;
-import redpannde.hydraulics_simulated.pistons.PneumaticPistonRenderer;
-import redpannde.hydraulics_simulated.pistons.PneumaticPistonVisual;
-import redpannde.hydraulics_simulated.pistons.pneumatic_piston.plate.AbstractPistonPlateBlockEntity;
-import redpannde.hydraulics_simulated.pistons.pneumatic_piston.plate.AbstractPistonPlateBlockRenderer;
+import redpannde.hydraulics_simulated.pistons.pneumatic_piston.PneumaticPistonRenderer;
+import redpannde.hydraulics_simulated.pistons.pneumatic_piston.PneumaticPistonVisual;
+import redpannde.hydraulics_simulated.pistons.plate.AbstractPistonPlateBlockEntity;
+import redpannde.hydraulics_simulated.pistons.plate.AbstractPistonPlateBlockRenderer;
 
 public class HydraulicsSimBlockEntities {
 

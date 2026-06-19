@@ -6,7 +6,7 @@ import dev.simulated_team.simulated.content.blocks.swivel_bearing.link_block.Swi
 import net.minecraft.tags.BlockTags;
 import redpannde.hydraulics_simulated.HydraulicsSimulated;
 import redpannde.hydraulics_simulated.pistons.pneumatic_piston.PneumaticPistonBlock;
-import redpannde.hydraulics_simulated.pistons.pneumatic_piston.plate.AbstractPistonPlateBlock;
+import redpannde.hydraulics_simulated.pistons.plate.AbstractPistonPlateBlock;
 
 import static com.simibubi.create.foundation.data.ModelGen.customItemModel;
 

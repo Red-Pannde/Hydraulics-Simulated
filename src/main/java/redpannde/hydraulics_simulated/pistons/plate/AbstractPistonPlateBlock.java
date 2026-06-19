@@ -1,4 +1,4 @@
-package redpannde.hydraulics_simulated.pistons.pneumatic_piston.plate;
+package redpannde.hydraulics_simulated.pistons.plate;
 
 import com.simibubi.create.content.kinetics.base.DirectionalKineticBlock;
 import com.simibubi.create.foundation.block.IBE;

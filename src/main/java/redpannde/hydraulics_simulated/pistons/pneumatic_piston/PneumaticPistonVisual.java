@@ -1,4 +1,4 @@
-package redpannde.hydraulics_simulated.pistons;
+package redpannde.hydraulics_simulated.pistons.pneumatic_piston;
 
 import com.simibubi.create.content.kinetics.base.OrientedRotatingVisual;
 import dev.engine_room.flywheel.api.visualization.VisualizationContext;
@@ -6,7 +6,6 @@ import dev.engine_room.flywheel.lib.model.Models;
 import dev.simulated_team.simulated.index.SimPartialModels;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
-import redpannde.hydraulics_simulated.pistons.pneumatic_piston.PneumaticPistonBlockEntity;
 
 public class PneumaticPistonVisual extends OrientedRotatingVisual<PneumaticPistonBlockEntity> {
     /**
