@@ -4,12 +4,14 @@ import com.simibubi.create.content.kinetics.base.DirectionalKineticBlock;
 import com.simibubi.create.foundation.block.IBE;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.LevelReader;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
+import redpannde.hydraulics_simulated.pistons.AbstractPistonBlock;
 import redpannde.hydraulics_simulated.registry.HydraulicsSimBlockEntities;
 
-public class PneumaticPistonBlock extends DirectionalKineticBlock implements IBE<PneumaticPistonBlockEntity> {
+public class PneumaticPistonBlock extends AbstractPistonBlock implements IBE<PneumaticPistonBlockEntity> {
     public PneumaticPistonBlock(Properties properties) {
         super(properties);
     }
@@ -34,4 +36,6 @@ public class PneumaticPistonBlock extends DirectionalKineticBlock implements IBE
     public BlockEntityType<? extends PneumaticPistonBlockEntity> getBlockEntityType() {
         return HydraulicsSimBlockEntities.PNEUMATIC_PISTON_BLOCK_ENTITY.get();
     }
+
+
 }

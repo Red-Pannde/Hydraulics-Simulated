@@ -19,6 +19,7 @@ import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import redpannde.hydraulics_simulated.pistons.AbstractPistonBlockEntity;
 
 import java.util.List;
 import java.util.UUID;
@@ -40,19 +41,19 @@ public class AbstractPistonPlateBlockEntity extends KineticBlockEntity implement
     public void remove() {
         // if the block was broken / destroyed, destroy our parent
         if (!this.level.isClientSide && !this.assembling) {
-            this.destroyBearing();
+            this.destroyPiston();
         }
 
         super.remove();
     }
 
-    private void destroyBearing() {
+    private void destroyPiston() {
         if (this.parent != null && this.getLevel().getBlockState(this.parent).is(SimBlocks.SWIVEL_BEARING)) {
             this.getLevel().destroyBlock(this.parent, false);
         }
     }
 
-    public void setParent(final SwivelBearingBlockEntity be) {
+    public void setParent(final AbstractPistonBlockEntity be) {
         final SubLevel subLevel = Sable.HELPER.getContaining(be);
 
         this.parent = be.getBlockPos();
@@ -119,8 +120,8 @@ public class AbstractPistonPlateBlockEntity extends KineticBlockEntity implement
         if (this.parent != null) {
             final BlockEntity parentBE = this.level.getBlockEntity(this.parent);
 
-            if (parentBE instanceof final SwivelBearingBlockEntity swivelBearingBlockEntity) {
-                swivelBearingBlockEntity.updateServoCoefficients();
+            if (parentBE instanceof final AbstractPistonBlockEntity abstractPistonBlockEntity) {
+                abstractPistonBlockEntity.updateServoCoefficients();
             }
         }
     }

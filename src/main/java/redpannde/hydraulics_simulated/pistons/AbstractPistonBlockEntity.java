@@ -1,21 +1,24 @@
 package redpannde.hydraulics_simulated.pistons;
 
 import com.simibubi.create.content.contraptions.AssemblyException;
-import com.simibubi.create.content.contraptions.bearing.BearingBlock;
+import com.simibubi.create.content.contraptions.IDisplayAssemblyExceptions;
 import com.simibubi.create.content.kinetics.base.DirectionalKineticBlock;
 import com.simibubi.create.content.kinetics.base.IRotate;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
-import com.simibubi.create.content.kinetics.simpleRelays.ICogWheel;
-import com.simibubi.create.content.kinetics.transmission.sequencer.SequencerInstructions;
 import com.simibubi.create.foundation.blockEntity.behaviour.BlockEntityBehaviour;
 import com.simibubi.create.foundation.blockEntity.behaviour.CenteredSideValueBoxTransform;
 import com.simibubi.create.foundation.blockEntity.behaviour.scrollValue.INamedIconOptions;
 import com.simibubi.create.foundation.blockEntity.behaviour.scrollValue.ScrollOptionBehaviour;
 import com.simibubi.create.foundation.gui.AllIcons;
-import com.simibubi.create.foundation.item.TooltipHelper;
 import dev.ryanhcode.sable.Sable;
 import dev.ryanhcode.sable.api.SubLevelAssemblyHelper;
+import dev.ryanhcode.sable.api.block.BlockEntitySubLevelActor;
 import dev.ryanhcode.sable.api.physics.PhysicsPipeline;
+import dev.ryanhcode.sable.api.physics.constraint.ConstraintJointAxis;
+import dev.ryanhcode.sable.api.physics.constraint.PhysicsConstraintHandle;
+import dev.ryanhcode.sable.api.physics.constraint.free.FreeConstraintHandle;
+import dev.ryanhcode.sable.api.physics.constraint.generic.GenericConstraintConfiguration;
+import dev.ryanhcode.sable.api.physics.constraint.generic.GenericConstraintHandle;
 import dev.ryanhcode.sable.api.physics.constraint.rotary.RotaryConstraintConfiguration;
 import dev.ryanhcode.sable.api.physics.constraint.rotary.RotaryConstraintHandle;
 import dev.ryanhcode.sable.api.schematic.SubLevelSchematicSerializationContext;
@@ -23,6 +26,8 @@ import dev.ryanhcode.sable.api.sublevel.ServerSubLevelContainer;
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
 import dev.ryanhcode.sable.companion.math.JOMLConversion;
 import dev.ryanhcode.sable.companion.math.Pose3d;
+import dev.ryanhcode.sable.physics.impl.rapier.constraint.free.RapierFreeConstraintHandle;
+import dev.ryanhcode.sable.physics.impl.rapier.constraint.rotary.RapierRotaryConstraintHandle;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import dev.ryanhcode.sable.sublevel.plot.LevelPlot;
@@ -30,19 +35,14 @@ import dev.ryanhcode.sable.sublevel.system.SubLevelPhysicsSystem;
 import dev.simulated_team.simulated.Simulated;
 import dev.simulated_team.simulated.config.server.physics.SimPhysics;
 import dev.simulated_team.simulated.content.blocks.swivel_bearing.SwivelBearingBlock;
-import dev.simulated_team.simulated.content.blocks.swivel_bearing.SwivelBearingBlockEntity;
 import dev.simulated_team.simulated.content.blocks.swivel_bearing.link_block.SwivelBearingPlateBlock;
 import dev.simulated_team.simulated.content.blocks.swivel_bearing.link_block.SwivelBearingPlateBlockEntity;
-import dev.simulated_team.simulated.data.SimLang;
 import dev.simulated_team.simulated.data.advancements.SimAdvancements;
 import dev.simulated_team.simulated.index.SimBlocks;
 import dev.simulated_team.simulated.index.SimSoundEvents;
 import dev.simulated_team.simulated.service.SimConfigService;
 import dev.simulated_team.simulated.util.SimAssemblyHelper;
 import dev.simulated_team.simulated.util.SimLevelUtil;
-import dev.simulated_team.simulated.util.extra_kinetics.ExtraBlockPos;
-import dev.simulated_team.simulated.util.extra_kinetics.ExtraKinetics;
-import net.createmod.catnip.lang.FontHelper;
 import net.createmod.catnip.math.AngleHelper;
 import net.createmod.catnip.math.VecHelper;
 import net.minecraft.core.BlockPos;
@@ -59,7 +59,6 @@ import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.ChunkPos;
-import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.Rotation;
@@ -71,16 +70,20 @@ import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Quaterniond;
+import org.joml.QuaterniondInterpolator;
 import org.joml.Vector3d;
 import org.joml.Vector3dc;
+import redpannde.hydraulics_simulated.pistons.plate.AbstractPistonPlateBlock;
+import redpannde.hydraulics_simulated.pistons.plate.AbstractPistonPlateBlockEntity;
+import redpannde.hydraulics_simulated.registry.HydraulicsSimBlocks;
 
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.BiPredicate;
 
-import static net.minecraft.ChatFormatting.GOLD;
+public abstract class AbstractPistonBlockEntity extends KineticBlockEntity implements IDisplayAssemblyExceptions, BlockEntitySubLevelActor {
 
-public class AbstractPistonBlockEntity extends KineticBlockEntity {
     private static final MutableComponent SCROLL_OPTION_TITLE = Component.translatable(Simulated.MOD_ID + ".scroll_option.swivel_default_locked");
 
     /**
@@ -95,7 +98,7 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
     /**
      * The current target angle in degrees
      */
-    private double targetAngleLength = 0;
+    private double targetLength = 0;
     /**
      * The ID of the attached sub-level
      */
@@ -105,12 +108,12 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
      * The block position of the attached {@link SwivelBearingPlateBlock}
      */
     @Nullable
-    private BlockPos swivelPlatePos;
+    private BlockPos pistonPlatePos;
     /**
      * The current constraint handle between this swivel and the attached sub-level
      */
     @Nullable
-    private RotaryConstraintHandle handle;
+    private GenericConstraintHandle handle;
     /**
      * If this BE is being destroyed as a part of assembly
      */
@@ -118,7 +121,9 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
     /**
      * The locked default scroll option
      */
-    private ScrollOptionBehaviour<SwivelBearingBlockEntity.LockingSetting> lockedDefaultOption;
+    private ScrollOptionBehaviour<LockingSetting> lockedDefaultOption;
+    private double sequencedExtensionLimit;
+
     public AbstractPistonBlockEntity(BlockEntityType<?> typeIn, BlockPos pos, BlockState state) {
         super(typeIn, pos, state);
         this.assembleNextTick = false;
@@ -128,7 +133,7 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
     public void addBehaviours(final List<BlockEntityBehaviour> behaviours) {
         super.addBehaviours(behaviours);
 
-        this.lockedDefaultOption = new ScrollOptionBehaviour<>(SwivelBearingBlockEntity.LockingSetting.class, SCROLL_OPTION_TITLE, this, new SwivelBearingBlockEntity.SelectionModeValueBox(this::isValidForOptionPanel));
+        this.lockedDefaultOption = new ScrollOptionBehaviour<>(LockingSetting.class, SCROLL_OPTION_TITLE, this, new AbstractPistonBlockEntity.SelectionModeValueBox(this::isValidForOptionPanel));
         this.lockedDefaultOption.value = 1;
         behaviours.add(this.lockedDefaultOption);
     }
@@ -145,18 +150,9 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
 
     @Override
     public void tick() {
-        final Level level = this.getLevel();
+
 
         super.tick();
-        this.cogwheel.tick();
-
-        if (level.isClientSide) {
-            if (this.isTooFast()) {
-                this.playGrindingEffect();
-            }
-
-            return;
-        }
 
         // assemble or disassemble
         if (this.assembleNextTick) {
@@ -185,7 +181,7 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
                 final BlockState plateBlock = this.level.getBlockState(this.getPlatePos());
 
                 if (plateBlock.is(SimBlocks.SWIVEL_BEARING_LINK_BLOCK)) {
-                    this.setTargetAngleFromCurrentOrientation(plateBlock, attached);
+                    this.setTargetLengthFromCurrentExtension(plateBlock, attached);
                 }
             }
         } else if (!shouldLock && this.isLocking()) {
@@ -203,14 +199,12 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
         }
 
         // update our target angles
-        this.lastTargetAngleDegrees = this.targetAngleDegrees;
-        float angularSpeed = convertToAngular(this.limitCogSpeed(this.cogwheel.getSpeed()));
+        this.lastTargetLength = this.targetLength;
 
         boolean shouldUpdateAngle = true;
 
-        if (this.sequencedAngleLimit >= 0) {
-            angularSpeed = (float) Mth.clamp(angularSpeed, -this.sequencedAngleLimit, this.sequencedAngleLimit);
-            this.sequencedAngleLimit = Math.max(0, this.sequencedAngleLimit - Math.abs(angularSpeed));
+        if (this.sequencedExtensionLimit >= 0) {
+
         } else {
             final SubLevelPhysicsSystem physicsSystem = SubLevelPhysicsSystem.get(this.level);
             // if rotation is not sequenced (go to a set angle) and physics is paused, do not update target angle
@@ -218,15 +212,15 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
                 shouldUpdateAngle = false;
             }
         }
-
+/*
         if (shouldUpdateAngle) {
             // for negative facing directions, we need to negate the angular speed
             if (this.getBlockState().getValue(SwivelBearingBlock.FACING).getAxisDirection() == Direction.AxisDirection.NEGATIVE) {
                 angularSpeed *= -1.0f;
             }
 
-            this.targetAngleDegrees += angularSpeed;
-            this.targetAngleDegrees %= 360;
+            this.targetAngleLength += angularSpeed;
+            this.targetAngleLength %= 360;
 
             if (attached != null && this.isAssembled() && this.handle != null) {
                 final SubLevel containing = this.getContainingSubLevel();
@@ -244,6 +238,8 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
                 }
             }
         }
+
+ */
 
         this.assembleNextTick = false;
     }
@@ -268,47 +264,10 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
 
     @Override
     public boolean addToTooltip(final List<Component> tooltip, final boolean isPlayerSneaking) {
-        if (super.addToTooltip(tooltip, isPlayerSneaking))
-            return true;
-
-        if (isPlayerSneaking)
-            return false;
-
-        if (this.cogwheel.getSpeed() == 0)
-            return false;
-
-        if (this.isAssembled()) {
-            if (this.isTooFast()) {
-                SimLang.translate("swivel_bearing.too_fast")
-                        .style(GOLD)
-                        .forGoggles(tooltip);
-
-                final MutableComponent component = SimLang.translate("swivel_bearing.too_fast_error")
-                        .component();
-
-                final List<Component> cutString = TooltipHelper.cutTextComponent(component, FontHelper.Palette.GRAY_AND_WHITE);
-                tooltip.addAll(cutString);
-
-                return true;
-            }
-
-            return false;
-        }
-        final BlockState state = this.getBlockState();
-        if (!(state.getBlock() instanceof SwivelBearingBlock))
-            return false;
-
-        final BlockState attachedState = this.level.getBlockState(this.worldPosition.relative(state.getValue(BearingBlock.FACING)));
-        if (attachedState.canBeReplaced())
-            return false;
-        TooltipHelper.addHint(tooltip, "hint.empty_bearing");
-        return true;
+        return super.addToTooltip(tooltip, isPlayerSneaking);
     }
 
-    private boolean isTooFast() {
-        final float maxSwivelRPM = SimConfigService.INSTANCE.server().blocks.maxSwivelBearingSpeed.getF();
-        return Math.abs(this.cogwheel.getSpeed()) > maxSwivelRPM;
-    }
+
 
     private float limitCogSpeed(final float speed) {
         final float maxSwivelRPM = SimConfigService.INSTANCE.server().blocks.maxSwivelBearingSpeed.getF();
@@ -321,9 +280,9 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
      *
      * @param attached the attached sublevel
      */
-    private void setTargetAngleFromCurrentOrientation(final BlockState attachedState, final SubLevel attached) {
+    private void setTargetLengthFromCurrentExtension(final BlockState attachedState, final SubLevel attached) {
         assert attached != null : "Attached sub-level is null!";
-
+        final Vector3d extension = new Vector3d(0, 0, 0);
         final Quaterniond orientationA = new Quaterniond();
         final Quaterniond blockOrientationA = new Quaterniond(this.getBlockState().getValue(SwivelBearingPlateBlock.FACING).getRotation());
         final Quaterniond blockOrientationB = new Quaterniond(attachedState.getValue(SwivelBearingPlateBlock.FACING).getRotation());
@@ -331,14 +290,15 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
         final SubLevel containing = this.getContainingSubLevel();
         if (containing != null) {
             orientationA.set(containing.logicalPose().orientation());
+            extension.add(containing.logicalPose().position());
         }
 
         final Quaterniond localB = new Quaterniond(orientationA).mul(blockOrientationA).conjugate().mul(new Quaterniond(orientationB).mul(blockOrientationB));
 
         final double d = new Vec3(0.0, 1.0, 0.0).dot(new Vec3(localB.x(), localB.y(), localB.z()));
         final double currentAngle = -2.0 * (float) Math.toDegrees(Math.atan2(-d, localB.w()));
-        this.targetAngleDegrees = currentAngle;
-        this.lastTargetAngleDegrees = currentAngle;
+        this.targetLength = currentAngle;
+        this.lastTargetLength = currentAngle;
     }
 
     public void updateServoCoefficients() {
@@ -350,7 +310,7 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
 
         if (!this.isLocking()) {
             // Passive un-locked damping
-            this.handle.setMotor(RotaryConstraintHandle.DEFAULT_AXIS, 0.0, 0.0, config.swivelBearingFriction.get(), false, 0.0);
+            this.handle.setMotor(ConstraintJointAxis.LINEAR_X, 0.0, 0.0, config.swivelBearingFriction.get(), false, 0.0);
             return;
         }
 
@@ -380,9 +340,9 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
 
         final double kP = config.swivelBearingStiffness.get() * totalInertia;
         final double kD = config.swivelBearingDamping.get() * totalInertia;
-        final float goal = AngleHelper.rad(AngleHelper.angleLerp(physicsSystem.getPartialPhysicsTick(), this.lastTargetAngleDegrees, this.targetAngleDegrees));
+        final float goal = AngleHelper.rad(AngleHelper.angleLerp(physicsSystem.getPartialPhysicsTick(), this.lastTargetLength, this.targetLength));
 
-        this.handle.setMotor(RotaryConstraintHandle.DEFAULT_AXIS, goal, kP, kD, false, 0.0);
+        this.handle.setMotor(ConstraintJointAxis.LINEAR_X, goal, kP, kD, false, 0.0);
         this.handle.setContactsEnabled(false);
     }
 
@@ -404,8 +364,8 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
 
         final ServerSubLevel assembledSubLevel;
         final BlockPos assembleOffset;
-        final BlockState link = SimBlocks.SWIVEL_BEARING_LINK_BLOCK.getDefaultState()
-                .setValue(SwivelBearingPlateBlock.FACING, this.getBlockState().getValue(SwivelBearingBlock.FACING));
+        final BlockState link = HydraulicsSimBlocks.PISTON_LINK_BLOCK.getDefaultState()
+                .setValue(AbstractPistonPlateBlock.FACING, this.getBlockState().getValue(AbstractPistonBlock.FACING));
 
         if (result != null) {
             assembledSubLevel = (ServerSubLevel) result.subLevel();
@@ -451,7 +411,7 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
             this.level.playSound(null, pos, SimSoundEvents.SIMULATED_CONTRAPTION_MOVES.event(), SoundSource.BLOCKS, 1.0f, 1.0f);
         }
 
-        this.getLevel().setBlockAndUpdate(pos, this.getBlockState().setValue(SwivelBearingBlock.ASSEMBLED, true));
+        this.getLevel().setBlockAndUpdate(pos, this.getBlockState().setValue(AbstractPistonBlock.ASSEMBLED, true));
 
         this.attachConstraints(assembledSubLevel, this.getConstraintPos(toAssemble, assembleOffset));
         this.setSubLevelID(assembledSubLevel.getUniqueId());
@@ -462,7 +422,7 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
         }
         final BlockEntity be = this.getLevel().getBlockEntity(plotPos);
 
-        if (be instanceof final SwivelBearingPlateBlockEntity plateBE) {
+        if (be instanceof final AbstractPistonPlateBlockEntity plateBE) {
             plateBE.setParent(this);
             this.setPlatePos(plotPos);
         }
@@ -493,16 +453,16 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
             }
         }
 
-        this.getLevel().setBlockAndUpdate(this.getBlockPos(), this.getBlockState().setValue(SwivelBearingBlock.ASSEMBLED, false));
+        this.getLevel().setBlockAndUpdate(this.getBlockPos(), this.getBlockState().setValue(AbstractPistonBlock.ASSEMBLED, false));
 
         this.setSubLevelID(null);
         this.setPlatePos(null);
-        this.targetAngleDegrees = 0;
+        this.targetLength = 0;
     }
 
     private void checkPersistence(final UUID id) {
         if (this.getPlatePos() != null && SimLevelUtil.isAreaActuallyLoaded(this.getLevel(), this.getPlatePos(), 1)) {
-            if (!this.getLevel().getBlockState(this.getPlatePos()).is(SimBlocks.SWIVEL_BEARING_LINK_BLOCK)) {
+            if (!this.getLevel().getBlockState(this.getPlatePos()).is(HydraulicsSimBlocks.PISTON_LINK_BLOCK)) {
                 return;
             }
         }
@@ -530,17 +490,17 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
             }
 
             final BlockState plateState = this.level.getBlockState(platePos);
-            if (!plateState.is(SimBlocks.SWIVEL_BEARING_LINK_BLOCK)) return;
+            if (!plateState.is(HydraulicsSimBlocks.PISTON_LINK_BLOCK)) return;
 
-            final Direction plateFacing = plateState.getValue(SwivelBearingPlateBlock.FACING);
+            final Direction plateFacing = plateState.getValue(AbstractPistonPlateBlock.FACING);
             this.attachConstraints(toAttach, JOMLConversion.toJOML(platePos.relative(plateFacing).getCenter()));
         }
     }
 
     public void associatePlateWithParent() {
         if (this.getPlatePos() != null) {
-            if (this.getLevel().getBlockState(this.getPlatePos()).is(SimBlocks.SWIVEL_BEARING_LINK_BLOCK)) {
-                final SwivelBearingPlateBlockEntity plate = (SwivelBearingPlateBlockEntity) this.getLevel().getBlockEntity(this.getPlatePos());
+            if (this.getLevel().getBlockState(this.getPlatePos()).is(HydraulicsSimBlocks.PISTON_LINK_BLOCK)) {
+                final AbstractPistonPlateBlockEntity plate = (AbstractPistonPlateBlockEntity) this.getLevel().getBlockEntity(this.getPlatePos());
                 plate.setParent(this);
             }
         }
@@ -552,17 +512,20 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
         if (platePos == null) return;
         final BlockState plateState = this.level.getBlockState(platePos);
 
-        if (!plateState.is(SimBlocks.SWIVEL_BEARING_LINK_BLOCK)) return;
+        if (!plateState.is(HydraulicsSimBlocks.PISTON_LINK_BLOCK)) return;
 
         final Vector3d anchorPos = JOMLConversion.toJOML(this.getBlockPos().relative(this.getBlockState().getValue(DirectionalKineticBlock.FACING)).getCenter());
-        final Vec3 facingVec = Vec3.atLowerCornerOf(this.getBlockState().getValue(DirectionalKineticBlock.FACING).getNormal());
+        /* final Vec3 facingVec = Vec3.atLowerCornerOf(this.getBlockState().getValue(DirectionalKineticBlock.FACING).getNormal()); */
         final Vec3 plateFacingVec = Vec3.atLowerCornerOf(plateState.getValue(DirectionalKineticBlock.FACING).getNormal());
+        final Quaterniond quaterniond = new Quaterniond();
+        final Set<ConstraintJointAxis> constraintJointAxisSet = Set.of(ConstraintJointAxis.ANGULAR_X, ConstraintJointAxis.ANGULAR_Y, ConstraintJointAxis.ANGULAR_Z, ConstraintJointAxis.LINEAR_Z, ConstraintJointAxis.LINEAR_Y );
 
-        final RotaryConstraintConfiguration constraint = new RotaryConstraintConfiguration(
+        final GenericConstraintConfiguration constraint = new GenericConstraintConfiguration(
                 anchorPos,
                 attachPos.sub(JOMLConversion.toJOML(plateFacingVec.scale(0.001f))),
-                JOMLConversion.toJOML(facingVec),
-                JOMLConversion.toJOML(plateFacingVec)
+                quaterniond,
+                quaterniond,
+                constraintJointAxisSet
         );
 
         final ServerSubLevelContainer container = SubLevelContainer.getContainer((ServerLevel) this.getLevel());
@@ -574,7 +537,7 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
     @Override
     protected void write(final CompoundTag compound, final HolderLookup.Provider registries, final boolean clientPacket) {
         super.write(compound, registries, clientPacket);
-        compound.putDouble("TargetAngle", this.targetAngleDegrees);
+        compound.putDouble("TargetLength", this.targetLength);
 
         BlockPos platePos = this.getPlatePos();
         UUID id = this.getSubLevelID();
@@ -599,11 +562,11 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
         }
 
         if (platePos != null) {
-            compound.put("SwivelPlate", NbtUtils.writeBlockPos(platePos));
+            compound.put("PistonPlate", NbtUtils.writeBlockPos(platePos));
         }
 
-        if (this.sequencedAngleLimit >= 0)
-            compound.putDouble("SequencedAngleLimit", this.sequencedAngleLimit);
+        if (this.sequencedExtensionLimit >= 0)
+            compound.putDouble("SequencedAngleLimit", this.sequencedExtensionLimit);
 
         AssemblyException.write(compound, registries, this.lastException);
     }
@@ -611,7 +574,7 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
     @Override
     protected void read(final CompoundTag compound, final HolderLookup.Provider registries, final boolean clientPacket) {
         super.read(compound, registries, clientPacket);
-        this.targetAngleDegrees = compound.getDouble("TargetAngle");
+        this.targetLength = compound.getDouble("TargetAngle");
 
         final SubLevelSchematicSerializationContext schematicContext = SubLevelSchematicSerializationContext.getCurrentContext();
 
@@ -636,7 +599,7 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
             this.setPlatePos(blockPos);
         }
 
-        this.sequencedAngleLimit = compound.contains("SequencedAngleLimit") ? compound.getDouble("SequencedAngleLimit") : -1;
+        this.sequencedExtensionLimit = compound.contains("SequencedAngleLimit") ? compound.getDouble("SequencedAngleLimit") : -1;
         this.lastException = AssemblyException.read(compound, registries);
     }
 
@@ -664,7 +627,7 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
     }
 
     public boolean isAssembled() {
-        return this.getBlockState().getValue(SwivelBearingBlock.ASSEMBLED);
+        return this.getBlockState().getValue(AbstractPistonBlock.ASSEMBLED);
     }
 
     private @Nullable SubLevel getAttachedSubLevel() {
@@ -693,8 +656,8 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
             final SubLevel subLevel = container.getSubLevel(this.subLevelID);
             if (subLevel == null) return;
 
-            if (this.getLevel().getBlockState(platePos).is(SimBlocks.SWIVEL_BEARING_LINK_BLOCK)) {
-                SimBlocks.SWIVEL_BEARING_LINK_BLOCK.get().withBlockEntityDo(this.level, platePos, SwivelBearingPlateBlockEntity::beforeAssembly);
+            if (this.getLevel().getBlockState(platePos).is(HydraulicsSimBlocks.PISTON_LINK_BLOCK)) {
+                HydraulicsSimBlocks.PISTON_LINK_BLOCK.get().withBlockEntityDo(this.level, platePos, AbstractPistonPlateBlockEntity::beforeAssembly);
                 this.getLevel().setBlock(platePos, Blocks.AIR.defaultBlockState(), 2);
             }
         }
@@ -707,33 +670,24 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
         }
     }
 
-    public double getTargetAngleDegrees() {
-        return this.targetAngleDegrees;
+    public double getTargetLength() {
+        return this.targetLength;
     }
 
-    @Override
-    public @NotNull KineticBlockEntity getExtraKinetics() {
-        return this.cogwheel;
-    }
 
-    @Override
-    public boolean shouldConnectExtraKinetics() {
-        return false;
-    }
 
-    @Override
-    public String getExtraKineticsSaveName() {
-        return "SwivelCog";
-    }
+
+
+
 
     @Override
     public float propagateRotationTo(final KineticBlockEntity target, final BlockState stateFrom, final BlockState stateTo, final BlockPos diff, final boolean connectedViaAxes, final boolean connectedViaCogs) {
-        return this.getPlatePos() != null && stateTo.getBlock() instanceof SwivelBearingPlateBlock ? 1 : super.propagateRotationTo(target, stateFrom, stateTo, diff, connectedViaAxes, connectedViaCogs);
+        return this.getPlatePos() != null && stateTo.getBlock() instanceof AbstractPistonPlateBlock ? 1 : super.propagateRotationTo(target, stateFrom, stateTo, diff, connectedViaAxes, connectedViaCogs);
     }
 
     @Override
     public boolean isCustomConnection(final KineticBlockEntity other, final BlockState state, final BlockState otherState) {
-        return this.getPlatePos() != null && otherState.getBlock() instanceof SwivelBearingPlateBlock;
+        return this.getPlatePos() != null && otherState.getBlock() instanceof AbstractPistonPlateBlock;
     }
 
     @Override
@@ -746,11 +700,11 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
     }
 
     public @Nullable BlockPos getPlatePos() {
-        return this.swivelPlatePos;
+        return this.pistonPlatePos;
     }
 
     public void setPlatePos(@Nullable final BlockPos swivelPlatePos) {
-        this.swivelPlatePos = swivelPlatePos;
+        this.pistonPlatePos = swivelPlatePos;
     }
 
     public @Nullable UUID getSubLevelID() {
@@ -813,7 +767,7 @@ public class AbstractPistonBlockEntity extends KineticBlockEntity {
         public boolean shouldLock(final int signal) {
             if (this == UNLOCKED_ALWAYS) return false;
             if (this == LOCKED_ALWAYS) return true;
-            return signal > 0 != (this == SwivelBearingBlockEntity.LockingSetting.LOCKED_DEFAULT);
+            return signal > 0 != (this == AbstractPistonBlockEntity.LockingSetting.LOCKED_DEFAULT);
         }
     }
 
