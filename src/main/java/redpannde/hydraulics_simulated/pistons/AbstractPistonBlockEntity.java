@@ -81,6 +81,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.BiPredicate;
+import java.util.logging.Logger;
 
 public abstract class AbstractPistonBlockEntity extends KineticBlockEntity implements IDisplayAssemblyExceptions, BlockEntitySubLevelActor {
 
@@ -91,6 +92,8 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
      */
     public boolean assembleNextTick;
     protected AssemblyException lastException;
+
+    protected double sequencedExtensionLimit = 1;
     /**
      * The target angle degrees from the last tick
      */
@@ -122,7 +125,6 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
      * The locked default scroll option
      */
     private ScrollOptionBehaviour<LockingSetting> lockedDefaultOption;
-    private double sequencedExtensionLimit;
 
     public AbstractPistonBlockEntity(BlockEntityType<?> typeIn, BlockPos pos, BlockState state) {
         super(typeIn, pos, state);
@@ -133,7 +135,7 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
     public void addBehaviours(final List<BlockEntityBehaviour> behaviours) {
         super.addBehaviours(behaviours);
 
-        this.lockedDefaultOption = new ScrollOptionBehaviour<>(LockingSetting.class, SCROLL_OPTION_TITLE, this, new AbstractPistonBlockEntity.SelectionModeValueBox(this::isValidForOptionPanel));
+        this.lockedDefaultOption = new ScrollOptionBehaviour<>(LockingSetting.class, SCROLL_OPTION_TITLE, this, new SelectionModeValueBox(this::isValidForOptionPanel));
         this.lockedDefaultOption.value = 1;
         behaviours.add(this.lockedDefaultOption);
     }
@@ -142,7 +144,7 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
      * @return if a direction is valid for a selector to be placed on
      */
     private boolean isValidForOptionPanel(final BlockState state, final Direction direction) {
-        final Direction facing = state.getValue(SwivelBearingBlock.FACING);
+        final Direction facing = state.getValue(AbstractPistonBlock.FACING);
         final Direction.Axis currentAxis = facing.getAxis();
 
         return direction.getAxis() != currentAxis;
@@ -153,6 +155,16 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
 
 
         super.tick();
+
+        if (this.level.isClientSide) {
+            /* if (this.isTooFast()) {
+                this.playGrindingEffect();
+            }
+
+             */
+
+            return;
+        }
 
         // assemble or disassemble
         if (this.assembleNextTick) {
@@ -180,7 +192,7 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
             if (attached != null && this.getPlatePos() != null) {
                 final BlockState plateBlock = this.level.getBlockState(this.getPlatePos());
 
-                if (plateBlock.is(SimBlocks.SWIVEL_BEARING_LINK_BLOCK)) {
+                if (plateBlock.is(HydraulicsSimBlocks.PISTON_LINK_BLOCK)) {
                     this.setTargetLengthFromCurrentExtension(plateBlock, attached);
                 }
             }
@@ -195,16 +207,18 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
 
         // check persistence to make sure we keep our sublevel after reload
         if (this.getSubLevelID() != null) {
+
             this.checkPersistence(this.getSubLevelID());
         }
 
         // update our target angles
         this.lastTargetLength = this.targetLength;
+        float speed = getExtensionSpeed();
 
         boolean shouldUpdateAngle = true;
 
         if (this.sequencedExtensionLimit >= 0) {
-
+            speed  = (float) Mth.clamp(speed, -this.sequencedExtensionLimit, this.sequencedExtensionLimit);
         } else {
             final SubLevelPhysicsSystem physicsSystem = SubLevelPhysicsSystem.get(this.level);
             // if rotation is not sequenced (go to a set angle) and physics is paused, do not update target angle
@@ -212,8 +226,9 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
                 shouldUpdateAngle = false;
             }
         }
-/*
         if (shouldUpdateAngle) {
+
+            /*
             // for negative facing directions, we need to negate the angular speed
             if (this.getBlockState().getValue(SwivelBearingBlock.FACING).getAxisDirection() == Direction.AxisDirection.NEGATIVE) {
                 angularSpeed *= -1.0f;
@@ -222,10 +237,11 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
             this.targetAngleLength += angularSpeed;
             this.targetAngleLength %= 360;
 
+             */
+
             if (attached != null && this.isAssembled() && this.handle != null) {
                 final SubLevel containing = this.getContainingSubLevel();
-
-                if (angularSpeed != 0.0) {
+                
                     final PhysicsPipeline pipeline = ((ServerSubLevelContainer) SubLevelContainer.getContainer(this.level)).physicsSystem().getPipeline();
 
                     if (containing instanceof final ServerSubLevel serverSubLevel) {
@@ -235,14 +251,13 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
                     if (attached instanceof final ServerSubLevel serverSubLevel) {
                         pipeline.wakeUp(serverSubLevel);
                     }
-                }
             }
         }
 
- */
-
         this.assembleNextTick = false;
     }
+
+    protected abstract float getExtensionSpeed();
 
     private void playGrindingEffect() {
         final Direction facing = this.getBlockState().getValue(SwivelBearingBlock.FACING);
@@ -426,8 +441,6 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
             plateBE.setParent(this);
             this.setPlatePos(plotPos);
         }
-
-        SimAdvancements.YOU_SPIN_ME_RIGHT_ROUND.awardToNearby(pos, this.getLevel());
     }
 
     public void disassemble() {
@@ -515,10 +528,14 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
         if (!plateState.is(HydraulicsSimBlocks.PISTON_LINK_BLOCK)) return;
 
         final Vector3d anchorPos = JOMLConversion.toJOML(this.getBlockPos().relative(this.getBlockState().getValue(DirectionalKineticBlock.FACING)).getCenter());
-        /* final Vec3 facingVec = Vec3.atLowerCornerOf(this.getBlockState().getValue(DirectionalKineticBlock.FACING).getNormal()); */
         final Vec3 plateFacingVec = Vec3.atLowerCornerOf(plateState.getValue(DirectionalKineticBlock.FACING).getNormal());
         final Quaterniond quaterniond = new Quaterniond();
-        final Set<ConstraintJointAxis> constraintJointAxisSet = Set.of(ConstraintJointAxis.ANGULAR_X, ConstraintJointAxis.ANGULAR_Y, ConstraintJointAxis.ANGULAR_Z, ConstraintJointAxis.LINEAR_Z, ConstraintJointAxis.LINEAR_Y );
+        final Set<ConstraintJointAxis> constraintJointAxisSet = new java.util.HashSet<>(Set.of(ConstraintJointAxis.ANGULAR_X, ConstraintJointAxis.ANGULAR_Y, ConstraintJointAxis.ANGULAR_Z));
+        Direction.Axis axis = this.getBlockState().getValue(AbstractPistonBlock.FACING).getAxis();
+        for (int i = 0; i < 3; i++) {
+            if (!axis.equals(Direction.Axis.VALUES[i]))
+            constraintJointAxisSet.add(ConstraintJointAxis.LINEAR[i]);
+        }
 
         final GenericConstraintConfiguration constraint = new GenericConstraintConfiguration(
                 anchorPos,
@@ -527,6 +544,8 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
                 quaterniond,
                 constraintJointAxisSet
         );
+
+
 
         final ServerSubLevelContainer container = SubLevelContainer.getContainer((ServerLevel) this.getLevel());
         final PhysicsPipeline pipeline = container.physicsSystem().getPipeline();
@@ -566,7 +585,7 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
         }
 
         if (this.sequencedExtensionLimit >= 0)
-            compound.putDouble("SequencedAngleLimit", this.sequencedExtensionLimit);
+            compound.putDouble("SequencedExtensionLimit", this.sequencedExtensionLimit);
 
         AssemblyException.write(compound, registries, this.lastException);
     }
@@ -574,7 +593,7 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
     @Override
     protected void read(final CompoundTag compound, final HolderLookup.Provider registries, final boolean clientPacket) {
         super.read(compound, registries, clientPacket);
-        this.targetLength = compound.getDouble("TargetAngle");
+        this.targetLength = compound.getDouble("TargetLength");
 
         final SubLevelSchematicSerializationContext schematicContext = SubLevelSchematicSerializationContext.getCurrentContext();
 
@@ -594,12 +613,12 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
             this.setSubLevelID(subLevelID);
         }
 
-        if (compound.contains("SwivelPlate")) {
-            final BlockPos blockPos = NbtUtils.readBlockPos(compound, "SwivelPlate").orElseThrow();
+        if (compound.contains("PistonPlate")) {
+            final BlockPos blockPos = NbtUtils.readBlockPos(compound, "PistonPlate").orElseThrow();
             this.setPlatePos(blockPos);
         }
 
-        this.sequencedExtensionLimit = compound.contains("SequencedAngleLimit") ? compound.getDouble("SequencedAngleLimit") : -1;
+        this.sequencedExtensionLimit = compound.contains("SequencedExtensionLimit") ? compound.getDouble("SequencedExtensionLimit") : -1;
         this.lastException = AssemblyException.read(compound, registries);
     }
 
@@ -703,8 +722,8 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
         return this.pistonPlatePos;
     }
 
-    public void setPlatePos(@Nullable final BlockPos swivelPlatePos) {
-        this.pistonPlatePos = swivelPlatePos;
+    public void setPlatePos(@Nullable final BlockPos pistonPlatePos) {
+        this.pistonPlatePos = pistonPlatePos;
     }
 
     public @Nullable UUID getSubLevelID() {
@@ -779,7 +798,7 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
         @Override
         public Vec3 getLocalOffset(final LevelAccessor level, final BlockPos pos, final BlockState state) {
             return super.getLocalOffset(level, pos, state)
-                    .subtract(Vec3.atLowerCornerOf(state.getValue(SwivelBearingBlock.FACING).getNormal())
+                    .subtract(Vec3.atLowerCornerOf(state.getValue(AbstractPistonBlock.FACING).getNormal())
                             .scale(5 / 16f));
         }
 
