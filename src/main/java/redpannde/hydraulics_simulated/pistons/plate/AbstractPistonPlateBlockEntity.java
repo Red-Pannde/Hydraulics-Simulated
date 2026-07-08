@@ -163,15 +163,18 @@ public class AbstractPistonPlateBlockEntity extends KineticBlockEntity implement
         if (be instanceof final SwivelBearingBlockEntity sbe) {
             sbe.setPlatePos(this.getBlockPos());
 
-            final SubLevel newSublevel = Sable.HELPER.getContaining(this);
+            final ServerSubLevel newSublevel = (ServerSubLevel) Sable.HELPER.getContaining(this);
             if (newSublevel != null) {
                 final UUID subLevelID = sbe.getSubLevelID();
                 final UUID newID = newSublevel.getUniqueId();
 
                 if (newID != subLevelID) {
                     sbe.setSubLevelID(newSublevel.getUniqueId());
-                    sbe.reattachConstraint(newSublevel, true);
+                    sbe.reattachConstraint( newSublevel, true);
                 }
+            } else {
+                sbe.setSubLevelID(null);
+                sbe.reattachConstraint(null, true);
             }
         }
     }
