@@ -41,13 +41,6 @@ repositories {
             includeGroup("dev.ryanhcode.sable-companion")
             includeGroup("dev.simulated_team.simulated")
         }
-        maven {
-            name = "Modrinth"
-            url = "https://api.modrinth.com/maven"
-            content {
-                includeGroup "maven.modrinth"
-            }
-        }
     }
     maven {
         name = "BlameJared"
