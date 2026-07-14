@@ -68,6 +68,7 @@ import redpannde.hydraulics_simulated.pistons.plate.AbstractPistonPlateBlock;
 import redpannde.hydraulics_simulated.pistons.plate.AbstractPistonPlateBlockEntity;
 import redpannde.hydraulics_simulated.registry.HydraulicsSimBlocks;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -180,9 +181,9 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
                 this.reattachConstraint(attached, false);
             }
 
+
             if (attached != null && this.getPlatePos() != null) {
                 final BlockState plateBlock = this.level.getBlockState(this.getPlatePos());
-
                 if (plateBlock.is(HydraulicsSimBlocks.PISTON_LINK_BLOCK)) {
                     this.setTargetLengthFromCurrentExtension(plateBlock, attached);
                 }
@@ -194,6 +195,7 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
                 //update our constraint
                 this.reattachConstraint(attached, false);
             }
+
         }
 
         // check persistence to make sure we keep our sublevel after reload
@@ -209,7 +211,7 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
         boolean shouldUpdateAngle = true;
 
         if (this.sequencedExtensionLimit >= 0) {
-            speed  = (float) Mth.clamp(speed, -this.sequencedExtensionLimit, this.sequencedExtensionLimit);
+            speed = (float) Mth.clamp(speed, -this.sequencedExtensionLimit, this.sequencedExtensionLimit);
         } else {
             final SubLevelPhysicsSystem physicsSystem = SubLevelPhysicsSystem.get(this.level);
             // if rotation is not sequenced (go to a set angle) and physics is paused, do not update target angle
@@ -219,29 +221,29 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
         }
         if (shouldUpdateAngle) {
 
-            /*
+
             // for negative facing directions, we need to negate the angular speed
             if (this.getBlockState().getValue(SwivelBearingBlock.FACING).getAxisDirection() == Direction.AxisDirection.NEGATIVE) {
-                angularSpeed *= -1.0f;
+                speed *= -1.0f;
             }
 
-            this.targetAngleLength += angularSpeed;
-            this.targetAngleLength %= 360;
+            this.targetLength += speed;
+            this.targetLength %= 360;
 
-             */
+
 
             if (attached != null && this.isAssembled() && this.handle != null) {
                 final SubLevel containing = this.getContainingSubLevel();
-                
-                    final PhysicsPipeline pipeline = ((ServerSubLevelContainer) SubLevelContainer.getContainer(this.level)).physicsSystem().getPipeline();
 
-                    if (containing instanceof final ServerSubLevel serverSubLevel) {
-                        pipeline.wakeUp(serverSubLevel);
-                    }
+                final PhysicsPipeline pipeline = ((ServerSubLevelContainer) SubLevelContainer.getContainer(this.level)).physicsSystem().getPipeline();
 
-                    if (attached instanceof final ServerSubLevel serverSubLevel) {
-                        pipeline.wakeUp(serverSubLevel);
-                    }
+                if (containing instanceof final ServerSubLevel serverSubLevel) {
+                    pipeline.wakeUp(serverSubLevel);
+                }
+
+                if (attached instanceof final ServerSubLevel serverSubLevel) {
+                    pipeline.wakeUp(serverSubLevel);
+                }
             }
         }
 
@@ -273,13 +275,6 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
         return super.addToTooltip(tooltip, isPlayerSneaking);
     }
 
-
-
-    private float limitCogSpeed(final float speed) {
-        final float maxSwivelRPM = SimConfigService.INSTANCE.server().blocks.maxSwivelBearingSpeed.getF();
-        return Mth.clamp(speed, -maxSwivelRPM, maxSwivelRPM);
-    }
-
     /**
      * Updates the target angle to reflect the current orientation of the containing and attached sub-levels.
      * Called when the swivel bearing starts locking, as to keep the angle it is currently at.
@@ -288,23 +283,30 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
      */
     private void setTargetLengthFromCurrentExtension(final BlockState attachedState, final SubLevel attached) {
         assert attached != null : "Attached sub-level is null!";
-        final Vector3d extension = new Vector3d(0, 0, 0);
+        final Vector3d extensionVector = attached.logicalPose().position();
+        double currentExtension = 0;
+        final Direction.Axis axis = this.getBlockState().getValue(AbstractPistonPlateBlock.FACING).getAxis();
+        for (int i = 0; i < 3; i++) {
+            if (Direction.Axis.VALUES[i] == axis) {
+                currentExtension = extensionVector.get(i);
+            }
+        }
+
         final Quaterniond orientationA = new Quaterniond();
-        final Quaterniond blockOrientationA = new Quaterniond(this.getBlockState().getValue(SwivelBearingPlateBlock.FACING).getRotation());
+        final Quaterniond blockOrientationA = new Quaterniond(this.getBlockState().getValue(AbstractPistonPlateBlock.FACING).getRotation());
         final Quaterniond blockOrientationB = new Quaterniond(attachedState.getValue(SwivelBearingPlateBlock.FACING).getRotation());
         final Quaterniond orientationB = new Quaterniond(attached.logicalPose().orientation());
         final SubLevel containing = this.getContainingSubLevel();
         if (containing != null) {
             orientationA.set(containing.logicalPose().orientation());
-            extension.add(containing.logicalPose().position());
         }
 
         final Quaterniond localB = new Quaterniond(orientationA).mul(blockOrientationA).conjugate().mul(new Quaterniond(orientationB).mul(blockOrientationB));
 
         final double d = new Vec3(0.0, 1.0, 0.0).dot(new Vec3(localB.x(), localB.y(), localB.z()));
         final double currentAngle = -2.0 * (float) Math.toDegrees(Math.atan2(-d, localB.w()));
-        this.targetLength = currentAngle;
-        this.lastTargetLength = currentAngle;
+        this.targetLength = currentExtension;
+        this.lastTargetLength = currentExtension;
     }
 
     public void updateServoCoefficients() {
@@ -348,7 +350,15 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
         final double kD = config.swivelBearingDamping.get() * totalInertia;
         final float goal = AngleHelper.rad(AngleHelper.angleLerp(physicsSystem.getPartialPhysicsTick(), this.lastTargetLength, this.targetLength));
 
-        this.handle.setMotor(ConstraintJointAxis.LINEAR_X, goal, kP, kD, false, 0.0);
+        Direction.Axis axis = this.getBlockState().getValue(AbstractPistonBlock.FACING).getAxis();
+        ConstraintJointAxis constraintJointAxis = null;
+        for (int i = 0; i < 3; i++) {
+            if (!axis.equals(Direction.Axis.VALUES[i]))
+               constraintJointAxis = ConstraintJointAxis.LINEAR[i];
+        }
+
+        assert this.handle != null;
+        this.handle.setMotor(constraintJointAxis, goal, kP, kD, false, 0.0);
         this.handle.setContactsEnabled(false);
     }
 
@@ -521,11 +531,11 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
         final Vector3d anchorPos = JOMLConversion.toJOML(this.getBlockPos().relative(this.getBlockState().getValue(DirectionalKineticBlock.FACING)).getCenter());
         final Vec3 plateFacingVec = Vec3.atLowerCornerOf(plateState.getValue(DirectionalKineticBlock.FACING).getNormal());
         final Quaterniond quaterniond = new Quaterniond();
-        final Set<ConstraintJointAxis> constraintJointAxisSet = new java.util.HashSet<>(Set.of(ConstraintJointAxis.ANGULAR_X, ConstraintJointAxis.ANGULAR_Y, ConstraintJointAxis.ANGULAR_Z));
+        final Set<ConstraintJointAxis> constraintJointAxisSet = new HashSet<>(Set.of(ConstraintJointAxis.ANGULAR_X, ConstraintJointAxis.ANGULAR_Y, ConstraintJointAxis.ANGULAR_Z));
         Direction.Axis axis = this.getBlockState().getValue(AbstractPistonBlock.FACING).getAxis();
         for (int i = 0; i < 3; i++) {
             if (!axis.equals(Direction.Axis.VALUES[i]))
-            constraintJointAxisSet.add(ConstraintJointAxis.LINEAR[i]);
+                constraintJointAxisSet.add(ConstraintJointAxis.LINEAR[i]);
         }
 
         final GenericConstraintConfiguration constraint = new GenericConstraintConfiguration(
@@ -535,7 +545,6 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
                 quaterniond,
                 constraintJointAxisSet
         );
-
 
 
         final ServerSubLevelContainer container = SubLevelContainer.getContainer((ServerLevel) this.getLevel());
@@ -640,7 +649,7 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
         return this.getBlockState().getValue(AbstractPistonBlock.ASSEMBLED);
     }
 
-    private @Nullable SubLevel getAttachedSubLevel() {
+    public @Nullable SubLevel getAttachedSubLevel() {
         final SubLevelContainer container = SubLevelContainer.getContainer(this.level);
         return container.getSubLevel(this.subLevelID);
     }
@@ -683,11 +692,6 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
     public double getTargetLength() {
         return this.targetLength;
     }
-
-
-
-
-
 
 
     @Override
@@ -777,7 +781,7 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
         public boolean shouldLock(final int signal) {
             if (this == UNLOCKED_ALWAYS) return false;
             if (this == LOCKED_ALWAYS) return true;
-            return signal > 0 != (this == AbstractPistonBlockEntity.LockingSetting.LOCKED_DEFAULT);
+            return signal > 0 != (this == LockingSetting.LOCKED_DEFAULT);
         }
     }
 
