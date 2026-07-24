@@ -31,7 +31,7 @@ public class PneumaticPistonBlockEntity extends AbstractPistonBlockEntity implem
 
     @Override
     protected float getExtensionSpeed() {
-        return this.shaft.getSpeed();
+        return this.shaft.getSpeed() * 0.00625f;
     }
 
 
