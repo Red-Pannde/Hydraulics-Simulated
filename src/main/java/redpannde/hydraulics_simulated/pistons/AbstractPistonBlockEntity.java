@@ -20,7 +20,6 @@ import dev.ryanhcode.sable.api.physics.constraint.GenericConstraintHandle;
 import dev.ryanhcode.sable.api.schematic.SubLevelSchematicSerializationContext;
 import dev.ryanhcode.sable.api.sublevel.ServerSubLevelContainer;
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
-import dev.ryanhcode.sable.companion.math.BoundingBox3dc;
 import dev.ryanhcode.sable.companion.math.JOMLConversion;
 import dev.ryanhcode.sable.companion.math.Pose3d;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
@@ -35,12 +34,8 @@ import dev.simulated_team.simulated.index.SimSoundEvents;
 import dev.simulated_team.simulated.service.SimConfigService;
 import dev.simulated_team.simulated.util.SimAssemblyHelper;
 import dev.simulated_team.simulated.util.SimLevelUtil;
-import net.createmod.catnip.math.AngleHelper;
 import net.createmod.catnip.math.VecHelper;
-import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
-import net.minecraft.core.HolderLookup;
-import net.minecraft.core.Vec3i;
+import net.minecraft.core.*;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtUtils;
@@ -62,7 +57,6 @@ import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Quaterniond;
-import org.joml.QuaterniondInterpolator;
 import org.joml.Vector3d;
 import org.joml.Vector3dc;
 import redpannde.hydraulics_simulated.pistons.plate.AbstractPistonPlateBlock;
@@ -71,7 +65,6 @@ import redpannde.hydraulics_simulated.registry.HydraulicsSimBlocks;
 
 import java.util.*;
 import java.util.function.BiPredicate;
-import java.util.logging.Logger;
 
 public abstract class AbstractPistonBlockEntity extends KineticBlockEntity implements IDisplayAssemblyExceptions, BlockEntitySubLevelActor {
 
@@ -85,7 +78,7 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
 
     protected double sequencedExtensionLimit = 0;
 
-    protected double extensionLimit = 20;
+    protected double pistonLength = 20;
     /**
      * The target angle degrees from the last tick
      */
@@ -208,23 +201,23 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
 
         boolean shouldUpdateAngle = true;
 
-        if (this.sequencedExtensionLimit >= 0) {
-
-        } else {
-            final SubLevelPhysicsSystem physicsSystem = SubLevelPhysicsSystem.get(this.level);
-            // if rotation is not sequenced (go to a set angle) and physics is paused, do not update target angle
-            if (physicsSystem == null || physicsSystem.getPaused()) {
-                shouldUpdateAngle = false;
-            }
+        final SubLevelPhysicsSystem physicsSystem = SubLevelPhysicsSystem.get(this.level);
+        // if rotation is not sequenced (go to a set angle) and physics is paused, do not update target angle
+        if (physicsSystem == null || physicsSystem.getPaused()) {
+            shouldUpdateAngle = false;
         }
         if (shouldUpdateAngle) {
 
-            // for negative facing directions, we need to negate the angular speed
-            if (this.getBlockState().getValue(SwivelBearingBlock.FACING).getAxisDirection() == Direction.AxisDirection.NEGATIVE) {
-                speed *= -1.0f;
-            }
+            double extensionLimit = this.pistonLength;
+
             if (this.isAssembled()) {
-                this.targetLength = Math.clamp(this.targetLength + speed, 0, this.extensionLimit);
+                // for negative facing directions, we need to negate the speed
+                if (this.getBlockState().getValue(AbstractPistonBlock.FACING).getAxisDirection() == Direction.AxisDirection.NEGATIVE) {
+                    speed *= -1.0f;
+                    this.targetLength = Math.clamp(this.targetLength + speed, -extensionLimit, 0);
+                } else {
+                    this.targetLength = Math.clamp(this.targetLength + speed, 0, extensionLimit);
+                }
             }
 
 
@@ -247,6 +240,8 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
     }
 
     protected abstract float getExtensionSpeed();
+
+    
 
     private void playGrindingEffect() {
         final Direction facing = this.getBlockState().getValue(SwivelBearingBlock.FACING);
@@ -287,46 +282,13 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
         Direction.Axis axis = this.getBlockState().getValue(AbstractPistonBlock.FACING).getAxis();
         Direction.AxisDirection axisDirection = this.getBlockState().getValue(AbstractPistonBlock.FACING).getAxisDirection();
         assert attached != null : "Attached sub-level is null!";
-        double platePos = 0;
-        double blockPos = this.getBlockPos().get(axis);
-        List<Double> boundingBox3dcMin = List.of(
-                attached.boundingBox().minX(),
-                attached.boundingBox().minY(),
-                attached.boundingBox().minZ()
-        );
-        List<Double> boundingBox3dcMax = List.of(
-                attached.boundingBox().maxX(),
-                attached.boundingBox().maxY(),
-                attached.boundingBox().maxZ()
-        );
-        for (int i = 0; i < 3; i++) {
-            if (axis.equals(Direction.Axis.VALUES[i])) {
-                switch (axisDirection) {
-                    case Direction.AxisDirection.POSITIVE: {
-                        platePos = boundingBox3dcMin.get(i);
-                        break;
-                    }
-                    case Direction.AxisDirection.NEGATIVE: {
-                        platePos = boundingBox3dcMax.get(i);
-
-                    }
-                }
-            }
-
-
-        }
-        final double extension = platePos - blockPos;
-
-        final Quaterniond orientationA = new Quaterniond();
-        final Quaterniond blockOrientationA = new Quaterniond(this.getBlockState().getValue(SwivelBearingPlateBlock.FACING).getRotation());
-        final Quaterniond blockOrientationB = new Quaterniond(attachedState.getValue(SwivelBearingPlateBlock.FACING).getRotation());
-        final Quaterniond orientationB = new Quaterniond(attached.logicalPose().orientation());
-        final SubLevel containing = this.getContainingSubLevel();
-
         assert this.getPlatePos() != null;
-        final Quaterniond localB = new Quaterniond(orientationA).mul(blockOrientationA).conjugate().mul(new Quaterniond(orientationB).mul(blockOrientationB));
-
-        final double d = new Vec3(0.0, 1.0, 0.0).dot(new Vec3(localB.x(), localB.y(), localB.z()));
+        Vec3 plateVec3 = Sable.HELPER.projectOutOfSubLevel(this.level, this.getPlatePos().getCenter());
+        Vec3 blockVec3 = Sable.HELPER.projectOutOfSubLevel(this.level, this.getBlockPos().getCenter());
+        double extension = plateVec3.subtract(blockVec3).length();
+        if (axisDirection.equals(Direction.AxisDirection.NEGATIVE)) {
+            extension *= -1f;
+        }
         this.targetLength = extension;
         this.lastTargetLength = extension;
     }
