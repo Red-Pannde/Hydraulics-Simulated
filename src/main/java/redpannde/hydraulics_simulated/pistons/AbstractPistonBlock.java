@@ -9,6 +9,7 @@ import dev.simulated_team.simulated.content.blocks.swivel_bearing.SwivelBearingB
 import net.createmod.catnip.placement.IPlacementHelper;
 import net.createmod.catnip.placement.PlacementHelpers;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
@@ -55,7 +56,7 @@ public abstract class AbstractPistonBlock extends DirectionalKineticBlock implem
                 return ItemInteractionResult.SUCCESS;
             }
 
-            this.withBlockEntityDo(level, blockPos, be -> be.assembleNextTick = true);
+            this.withBlockEntityDo(level, blockPos, be -> be.assembleNextTick = be.isController());
             return ItemInteractionResult.SUCCESS;
         }
         return ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION;
@@ -91,5 +92,11 @@ public abstract class AbstractPistonBlock extends DirectionalKineticBlock implem
     @Override
     public void afterMove(ServerLevel originLevel, ServerLevel resultingLevel, BlockState newState, BlockPos oldPos, BlockPos newPos) {
         this.withBlockEntityDo(resultingLevel, newPos, AbstractPistonBlockEntity::associatePlateWithParent);
+    }
+
+    @Override
+    public void onPlace(BlockState state, Level worldIn, BlockPos pos, BlockState oldState, boolean isMoving) {
+        this.getBlockEntity(worldIn, pos).setController();
+        super.onPlace(state, worldIn, pos, oldState, isMoving);
     }
 }

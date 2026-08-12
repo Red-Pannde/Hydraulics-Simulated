@@ -53,6 +53,7 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.DirectionProperty;
 import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -78,7 +79,8 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
 
     protected double sequencedExtensionLimit = 0;
 
-    protected double pistonLength = 20;
+    protected int controllerOffset;
+    protected int pistonLength = 0;
     /**
      * The target angle degrees from the last tick
      */
@@ -135,13 +137,64 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
         return direction.getAxis() != currentAxis;
     }
 
+    public void setController() {
+        AbstractPistonBlock abstractPistonBlock = (AbstractPistonBlock) this.getBlockState().getBlock();
+        final Direction facing = this.getBlockState().getValue(AbstractPistonBlock.FACING);
+        final Direction.Axis axis = facing.getAxis();
+        final Direction.AxisDirection axisDirection = facing.getAxisDirection();
+        final BlockPos lowerBlockPos = this.getBlockPos().relative(facing.getOpposite(), 1);
+        final BlockState lowerBlockState = this.level.getBlockState(lowerBlockPos);
+        boolean isController = true;
+
+        if (lowerBlockState.getBlock().equals(abstractPistonBlock)) {
+            final Direction lowerBlockFacing = lowerBlockState.getValue(AbstractPistonBlock.FACING);
+
+            if (axis.equals(lowerBlockFacing.getAxis()) && axisDirection.equals(lowerBlockFacing.getAxisDirection())) {
+                isController = false;
+                AbstractPistonBlockEntity lowerAbstractPistonBlockEntity = (AbstractPistonBlockEntity) this.level.getBlockEntity(lowerBlockPos);
+                assert lowerAbstractPistonBlockEntity != null;
+                int controllerOffSet = lowerAbstractPistonBlockEntity.getControllerOffset() + 1;
+                this.setControllerOffset(controllerOffSet);
+
+            }
+        }
+
+        if (isController) {
+            this.setControllerOffset(0);
+        }
+
+        boolean continueUpwardsCheck = true;
+        int upwardsOffset = this.getControllerOffset();
+        while (continueUpwardsCheck) {
+
+            upwardsOffset += 1;
+            final BlockPos upperBlockPos = this.getBlockPos().relative(axis, upwardsOffset);
+            final BlockState upperBlockState = this.level.getBlockState(upperBlockPos);
+            if (upperBlockState.getBlock().equals(abstractPistonBlock)) {
+                final Direction upperBlockFacing = upperBlockState.getValue(AbstractPistonBlock.FACING);
+
+                if (axis.equals(upperBlockFacing.getAxis()) && axisDirection.equals(upperBlockFacing.getAxisDirection())) {
+                    AbstractPistonBlockEntity upperBlockEntity =  (AbstractPistonBlockEntity) this.level.getBlockEntity(upperBlockPos);
+                    assert upperBlockEntity != null;
+                    upperBlockEntity.setControllerOffset(upwardsOffset);
+                    continue;
+                }
+            }
+            continueUpwardsCheck = false;
+            this.getController().setPistonLength(getPistonLength() + upwardsOffset);
+
+
+        }
+
+    }
+
     @Override
     public void tick() {
 
 
         super.tick();
 
-        if (this.level.isClientSide) {
+        if (this.level.isClientSide || !this.isController()) {
             /* if (this.isTooFast()) {
                 this.playGrindingEffect();
             }
@@ -241,7 +294,29 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
 
     protected abstract float getExtensionSpeed();
 
-    
+    public int getControllerOffset() {
+        return this.controllerOffset;
+    }
+
+    public AbstractPistonBlockEntity getController() {
+        return (AbstractPistonBlockEntity) this.level.getBlockEntity( this.getBlockPos().relative(this.getBlockState().getValue(AbstractPistonBlock.FACING).getOpposite(), this.controllerOffset));
+    }
+
+    public void setControllerOffset(int controllerOffset) {
+        this.controllerOffset = controllerOffset;
+    }
+
+    public boolean isController() {
+        return this.controllerOffset == 0;
+    }
+
+    public void setPistonLength(int length) {
+        this.pistonLength = length;
+    }
+
+    public int getPistonLength() {
+        return this.pistonLength;
+    }
 
     private void playGrindingEffect() {
         final Direction facing = this.getBlockState().getValue(SwivelBearingBlock.FACING);
@@ -348,7 +423,7 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
 
     public void assemble() {
         final BlockPos pos = this.getBlockPos();
-        final BlockPos toAssemble = pos.relative(this.getBlockState().getValue(SwivelBearingBlock.FACING));
+        final BlockPos toAssemble = pos.relative(this.getBlockState().getValue(AbstractPistonBlock.FACING), this.getPistonLength());
         final SimAssemblyHelper.AssemblyResult result;
 
         try {
