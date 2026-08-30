@@ -1,121 +1,128 @@
 package redpannde.hydraulics_simulated.pistons.pneumatic_piston;
 
-import com.simibubi.create.content.kinetics.base.*;
-import com.simibubi.create.content.kinetics.transmission.sequencer.SequencerInstructions;
-import dev.simulated_team.simulated.data.SimLang;
-import dev.simulated_team.simulated.util.extra_kinetics.ExtraBlockPos;
-import dev.simulated_team.simulated.util.extra_kinetics.ExtraKinetics;
+import com.simibubi.create.content.fluids.pump.PumpBlock;
+import com.simibubi.create.content.fluids.pump.PumpBlockEntity;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.network.chat.Component;
-import net.minecraft.world.level.LevelReader;
-import net.minecraft.world.level.block.Block;
+import net.minecraft.core.HolderLookup;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.block.state.StateDefinition;
-import net.minecraft.world.level.block.state.properties.BooleanProperty;
-import org.jetbrains.annotations.NotNull;
+import net.minecraft.world.phys.Vec3;
+import redpannde.hydraulics_simulated.HydraulicsSimulated;
 import redpannde.hydraulics_simulated.pistons.AbstractPistonBlockEntity;
 
-import java.util.List;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
 
-public class PneumaticPistonBlockEntity extends AbstractPistonBlockEntity implements ExtraKinetics{
+public class PneumaticPistonBlockEntity extends AbstractPistonBlockEntity {
+    protected List<Direction> attachedFluidPumpDirections;
 
-    private final PneumaticPistonShaftBlockEntity shaft;
 
     public PneumaticPistonBlockEntity(BlockEntityType<?> typeIn, BlockPos pos, BlockState state) {
         super(typeIn, pos, state);
-
-        this.shaft = new PneumaticPistonShaftBlockEntity(typeIn, pos, state, this);
     }
 
     @Override
-    protected float getExtensionSpeed() {
-        return this.shaft.getSpeed() * 0.00625f;
+    protected double getExtension() {
+        AtomicReference<Double> extension = new AtomicReference<>(this.targetLength);
+        final float speedReductionConstant = 0.00625f;
+        for (int length = this.pistonLength - 1; length >= 0; length--) {
+            if (this.level.getBlockEntity(this.getBlockPos().relative(this.getBlockState().getValue(PneumaticPistonBlock.FACING).getOpposite(), length)) instanceof PneumaticPistonBlockEntity pistonBlockEntity) {
+                if (pistonBlockEntity.attachedFluidPumpDirections != null && !pistonBlockEntity.attachedFluidPumpDirections.isEmpty()) {
+                    pistonBlockEntity.attachedFluidPumpDirections.forEach(pumpDirection -> {
+                        if (this.level.getBlockEntity(pistonBlockEntity.getBlockPos().relative(pumpDirection)) instanceof PumpBlockEntity fluidPump) {
+                            if (this.level.getBlockState(fluidPump.getBlockPos().relative(pumpDirection)).getBlock().equals(Blocks.AIR)) {
+
+                                float speed = Math.abs(fluidPump.getSpeed());
+                                if (Objects.equals(level.getBlockEntity(fluidPump.getBlockPos().relative(fluidPump.getBlockState().getValue(PumpBlock.FACING))), pistonBlockEntity)) {
+                                    extension.set(extension.get() + speed * speedReductionConstant);
+
+                                } else {
+                                    extension.set(extension.get() - speed * speedReductionConstant);                                }
+                            }
+                        }
+                    });
+                }
+            }
+        }
+        return extension.get();
+    }
+
+    public void getAttachedFluidPumps() {
+        List<Direction> attachedFluidPumps = new ArrayList<>();
+        List<Direction.Axis> axisList = new ArrayList<>(Arrays.stream(Direction.Axis.values()).toList());
+        Direction facing = this.getBlockState().getValue(PneumaticPistonBlock.FACING);
+        Direction.Axis facingAxis = facing.getAxis();
+        BlockPos blockPos = this.getBlockPos();
+        axisList.remove(facingAxis);
+        for (Direction.Axis axis : axisList) {
+            for (Direction direction : Direction.values()) {
+                if (this.level.getBlockEntity(blockPos.relative(direction)) instanceof PumpBlockEntity pumpBlockEntity) {
+                    if (pumpBlockEntity.getBlockState().getValue(PumpBlock.FACING).getAxis().equals(axis)) {
+                        attachedFluidPumps.add(direction);
+
+                    }
+                }
+            }
+        }
+        this.attachedFluidPumpDirections = attachedFluidPumps;
+    }
+
+    public void updateAttachedFluidPumps(BlockPos pos, BlockPos neighbor) {
+        if (this.attachedFluidPumpDirections == null) {
+            return;
+        }
+        if (this.level.getBlockEntity(neighbor) instanceof PumpBlockEntity pumpBlockEntity) {
+            Direction direction = pumpBlockEntity.getBlockState().getValue(PumpBlock.FACING);
+            if (neighbor.relative(direction).equals(pos) && !this.attachedFluidPumpDirections.contains(direction.getOpposite())) {
+                this.attachedFluidPumpDirections.add(direction.getOpposite());
+            } else if (neighbor.relative(direction.getOpposite()).equals(pos) && !this.attachedFluidPumpDirections.contains(direction)) {
+                this.attachedFluidPumpDirections.add(direction);
+            }
+        } else {
+            Vec3 vec3 = new Vec3(neighbor.getCenter().subtract(pos.getCenter()).toVector3f());
+            attachedFluidPumpDirections.remove(Direction.fromDelta((int) vec3.x, (int) vec3.y, (int) vec3.z));
+        }
+    }
+
+    @Override
+    public void assemble() {
+        this.targetLength = 0f;
+        super.assemble();
+    }
+
+    @Override
+    public void disassemble() {
+        this.targetLength = 0f;
+        super.disassemble();
+    }
+
+    @Override
+    protected void write(CompoundTag compound, HolderLookup.Provider registries, boolean clientPacket) {
+        HydraulicsSimulated.LOGGER.debug("write {}", compound.toString());
+        super.write(compound, registries, clientPacket);
+        List<Integer> intList = new IntArrayList();
+        if (this.attachedFluidPumpDirections != null) {
+            this.attachedFluidPumpDirections.forEach(pumpDirection -> intList.add(pumpDirection.get3DDataValue()));
+        }
+        compound.putIntArray("AttachedFluidPumpDirections", intList);
     }
 
 
     @Override
-    public @NotNull KineticBlockEntity getExtraKinetics() {
-        return this.shaft;
-    }
+    protected void read(CompoundTag compound, HolderLookup.Provider registries, boolean clientPacket) {
 
-    @Override
-    public boolean shouldConnectExtraKinetics() {
-        return false;
-    }
-
-
-
-    public static class PneumaticPistonShaftBlockEntity extends KineticBlockEntity implements ExtraKineticsBlockEntity {
-
-        public static final IRotate EXTRA_SHAFT_CONFIG = new IRotate() {
-
-            public static final BooleanProperty AXIS_ALONG_FIRST_COORDINATE = DirectionalAxisKineticBlock.AXIS_ALONG_FIRST_COORDINATE;
-
-            @Override
-            public boolean hasShaftTowards(LevelReader world, BlockPos pos, BlockState state, Direction face) {
-                return face.getAxis() == getRotationAxis(state);
-
-            }
-
-            @Override
-            public Direction.Axis getRotationAxis(BlockState state) {
-                Direction.Axis pistonAxis = state.getValue(DirectionalKineticBlock.FACING)
-                        .getAxis();
-                boolean alongFirst = state.getValue(AXIS_ALONG_FIRST_COORDINATE);
-
-                if (pistonAxis == Direction.Axis.X)
-                    return alongFirst ? Direction.Axis.Y : Direction.Axis.Z;
-                if (pistonAxis == Direction.Axis.Y)
-                    return alongFirst ? Direction.Axis.X : Direction.Axis.Z;
-                if (pistonAxis == Direction.Axis.Z)
-                    return alongFirst ? Direction.Axis.X : Direction.Axis.Y;
-
-                throw new IllegalStateException("Unknown axis??");
-            }
-
-
-        };
-
-        private final PneumaticPistonBlockEntity parent;
-
-        public PneumaticPistonShaftBlockEntity(final BlockEntityType<?> typeIn, final BlockPos pos, final BlockState state, final PneumaticPistonBlockEntity parent) {
-            super(typeIn, new ExtraBlockPos(pos), state);
-            this.parent = parent;
+        HydraulicsSimulated.LOGGER.debug("read {}", compound.toString());
+        super.read(compound, registries, clientPacket);
+        List<Direction> attachedFluidPumpDirections = new ArrayList<>();
+        for (int i : compound.getIntArray("AttachedFluidPumpDirections")) {
+            attachedFluidPumpDirections.add(Direction.from3DDataValue(i));
         }
-
-        @Override
-        public void onSpeedChanged(final float previousSpeed) {
-            super.onSpeedChanged(previousSpeed);
-
-            if (this.speed != 0.0 && !this.parent.isAssembled()) {
-                this.parent.assembleNextTick = true;
-            }
-
-            if (this.sequenceContext != null && this.sequenceContext.instruction() == SequencerInstructions.TURN_ANGLE) {
-                this.parent.sequencedExtensionLimit = this.sequenceContext.getEffectiveValue(this.getTheoreticalSpeed());
-            }
-        }
-
-        @Override
-        public KineticBlockEntity getParentBlockEntity() {
-            return this.parent;
-        }
-
-        @Override
-        protected void addStressImpactStats(final List<Component> tooltip, final float stressAtBase) {
-            super.addStressImpactStats(tooltip, stressAtBase);
-        }
-
-        @Override
-        protected boolean canPropagateDiagonally(final IRotate block, final BlockState state) {
-            return true;
-        }
-
-        @Override
-        public Component getKey() {
-            return SimLang.translate("extra_kinetics.extra_cogwheel").component();
-        }
+        this.attachedFluidPumpDirections = attachedFluidPumpDirections;
     }
 }
+
+

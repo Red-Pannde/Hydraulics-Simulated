@@ -47,13 +47,13 @@ import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.LevelAccessor;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
-import net.minecraft.world.level.block.state.properties.DirectionProperty;
 import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -66,6 +66,7 @@ import redpannde.hydraulics_simulated.registry.HydraulicsSimBlocks;
 
 import java.util.*;
 import java.util.function.BiPredicate;
+import java.util.function.Consumer;
 
 public abstract class AbstractPistonBlockEntity extends KineticBlockEntity implements IDisplayAssemblyExceptions, BlockEntitySubLevelActor {
 
@@ -80,15 +81,15 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
     protected double sequencedExtensionLimit = 0;
 
     protected int controllerOffset;
-    protected int pistonLength = 0;
+    protected int pistonLength;
     /**
      * The target angle degrees from the last tick
      */
-    private double lastTargetLength = 0;
+    protected double lastTargetLength = 0;
     /**
      * The current target angle in degrees
      */
-    private double targetLength = 0;
+    protected double targetLength = 0;
     /**
      * The ID of the attached sub-level
      */
@@ -138,54 +139,35 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
     }
 
     public void setController() {
-        AbstractPistonBlock abstractPistonBlock = (AbstractPistonBlock) this.getBlockState().getBlock();
         final Direction facing = this.getBlockState().getValue(AbstractPistonBlock.FACING);
-        final Direction.Axis axis = facing.getAxis();
-        final Direction.AxisDirection axisDirection = facing.getAxisDirection();
-        final BlockPos lowerBlockPos = this.getBlockPos().relative(facing.getOpposite(), 1);
-        final BlockState lowerBlockState = this.level.getBlockState(lowerBlockPos);
-        boolean isController = true;
 
-        if (lowerBlockState.getBlock().equals(abstractPistonBlock)) {
-            final Direction lowerBlockFacing = lowerBlockState.getValue(AbstractPistonBlock.FACING);
-
-            if (axis.equals(lowerBlockFacing.getAxis()) && axisDirection.equals(lowerBlockFacing.getAxisDirection())) {
-                isController = false;
-                AbstractPistonBlockEntity lowerAbstractPistonBlockEntity = (AbstractPistonBlockEntity) this.level.getBlockEntity(lowerBlockPos);
-                assert lowerAbstractPistonBlockEntity != null;
-                int controllerOffSet = lowerAbstractPistonBlockEntity.getControllerOffset() + 1;
-                this.setControllerOffset(controllerOffSet);
-
-            }
-        }
-
-        if (isController) {
+        if(!connectedBlocksCheck(1, facing, (upperPistonBlockEntity -> {
+            this.controllerOffset = upperPistonBlockEntity.getControllerOffset() + 1;
+        }))) {
             this.setControllerOffset(0);
         }
+        boolean continueDownwardsCheck = true;
+        int downwardsOffset = this.controllerOffset;
 
-        boolean continueUpwardsCheck = true;
-        int upwardsOffset = this.getControllerOffset();
-        while (continueUpwardsCheck) {
+        while (continueDownwardsCheck) {
+            downwardsOffset += 1;
+            int finalDownwardsOffset = downwardsOffset;
+            continueDownwardsCheck = connectedBlocksCheck(downwardsOffset ,facing.getOpposite(), lowerPistonBlockEntity -> {
+                lowerPistonBlockEntity.setControllerOffset(finalDownwardsOffset);
+            });}
+        this.getController().setPistonLength(downwardsOffset);
 
-            upwardsOffset += 1;
-            final BlockPos upperBlockPos = this.getBlockPos().relative(axis, upwardsOffset);
-            final BlockState upperBlockState = this.level.getBlockState(upperBlockPos);
-            if (upperBlockState.getBlock().equals(abstractPistonBlock)) {
-                final Direction upperBlockFacing = upperBlockState.getValue(AbstractPistonBlock.FACING);
+    }
 
-                if (axis.equals(upperBlockFacing.getAxis()) && axisDirection.equals(upperBlockFacing.getAxisDirection())) {
-                    AbstractPistonBlockEntity upperBlockEntity =  (AbstractPistonBlockEntity) this.level.getBlockEntity(upperBlockPos);
-                    assert upperBlockEntity != null;
-                    upperBlockEntity.setControllerOffset(upwardsOffset);
-                    continue;
-                }
-            }
-            continueUpwardsCheck = false;
-            this.getController().setPistonLength(getPistonLength() + upwardsOffset);
-
-
+    public boolean connectedBlocksCheck(Integer checkDistance, Direction checkDirection, Consumer<AbstractPistonBlockEntity> consumer) {
+        final BlockPos newBlockPos = this.getBlockPos().relative(checkDirection, checkDistance);
+        final Block newBlock = this.level.getBlockState(newBlockPos).getBlock();
+        if (newBlock.equals(this.getBlockState().getBlock())) {
+                final AbstractPistonBlockEntity newPistonBlockEntity = (AbstractPistonBlockEntity) this.level.getBlockEntity(newBlockPos);
+                consumer.accept(newPistonBlockEntity);
+                return true;
         }
-
+        return false;
     }
 
     @Override
@@ -195,12 +177,6 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
         super.tick();
 
         if (this.level.isClientSide || !this.isController()) {
-            /* if (this.isTooFast()) {
-                this.playGrindingEffect();
-            }
-
-             */
-
             return;
         }
 
@@ -250,7 +226,7 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
         }
         // update our target angles
         this.lastTargetLength = this.targetLength;
-        float speed = getExtensionSpeed();
+        double extension = getExtension();
 
         boolean shouldUpdateAngle = true;
 
@@ -266,10 +242,9 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
             if (this.isAssembled()) {
                 // for negative facing directions, we need to negate the speed
                 if (this.getBlockState().getValue(AbstractPistonBlock.FACING).getAxisDirection() == Direction.AxisDirection.NEGATIVE) {
-                    speed *= -1.0f;
-                    this.targetLength = Math.clamp(this.targetLength + speed, -extensionLimit, 0);
+                    this.targetLength = -Math.clamp(extension, 0, extensionLimit);
                 } else {
-                    this.targetLength = Math.clamp(this.targetLength + speed, 0, extensionLimit);
+                    this.targetLength = Math.clamp(extension, 0, extensionLimit);
                 }
             }
 
@@ -292,14 +267,14 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
         this.assembleNextTick = false;
     }
 
-    protected abstract float getExtensionSpeed();
+    protected abstract double getExtension();
 
     public int getControllerOffset() {
         return this.controllerOffset;
     }
 
     public AbstractPistonBlockEntity getController() {
-        return (AbstractPistonBlockEntity) this.level.getBlockEntity( this.getBlockPos().relative(this.getBlockState().getValue(AbstractPistonBlock.FACING).getOpposite(), this.controllerOffset));
+        return (AbstractPistonBlockEntity) this.level.getBlockEntity( this.getBlockPos().relative(this.getBlockState().getValue(AbstractPistonBlock.FACING), this.controllerOffset));
     }
 
     public void setControllerOffset(int controllerOffset) {
@@ -422,8 +397,11 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
     }
 
     public void assemble() {
+        if (!this.isController()) {
+            return;
+        }
         final BlockPos pos = this.getBlockPos();
-        final BlockPos toAssemble = pos.relative(this.getBlockState().getValue(AbstractPistonBlock.FACING), this.getPistonLength());
+        final BlockPos toAssemble = pos.relative(this.getBlockState().getValue(AbstractPistonBlock.FACING));
         final SimAssemblyHelper.AssemblyResult result;
 
         try {
@@ -617,7 +595,7 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
     protected void write(final CompoundTag compound, final HolderLookup.Provider registries, final boolean clientPacket) {
         super.write(compound, registries, clientPacket);
         compound.putDouble("TargetLength", this.targetLength);
-
+        compound.putInt("PistonLength", this.pistonLength);
         BlockPos platePos = this.getPlatePos();
         UUID id = this.getSubLevelID();
 
@@ -654,6 +632,7 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
     protected void read(final CompoundTag compound, final HolderLookup.Provider registries, final boolean clientPacket) {
         super.read(compound, registries, clientPacket);
         this.targetLength = compound.getDouble("TargetLength");
+        this.pistonLength = compound.getInt("PistonLength");
 
         final SubLevelSchematicSerializationContext schematicContext = SubLevelSchematicSerializationContext.getCurrentContext();
 
@@ -751,6 +730,10 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
 
     public double getTargetLength() {
         return this.targetLength;
+    }
+
+    public void setTargetLength(double targetLength) {
+        this.targetLength = targetLength;
     }
 
 

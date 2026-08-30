@@ -1,5 +1,7 @@
 package redpannde.hydraulics_simulated.pistons;
 
+import com.simibubi.create.AllBlocks;
+import com.simibubi.create.AllDataComponents;
 import com.simibubi.create.content.equipment.wrench.IWrenchable;
 import com.simibubi.create.content.kinetics.base.DirectionalKineticBlock;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
@@ -19,18 +21,24 @@ import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.LevelAccessor;
+import net.minecraft.world.level.LevelReader;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.BooleanProperty;
 import net.minecraft.world.phys.BlockHitResult;
+import org.jetbrains.annotations.NotNull;
 import redpannde.hydraulics_simulated.pistons.pneumatic_piston.PneumaticPistonBlockEntity;
 
 public abstract class AbstractPistonBlock extends DirectionalKineticBlock implements IBE<PneumaticPistonBlockEntity>, BlockSubLevelAssemblyListener {
 
     public static final BooleanProperty ASSEMBLED = BooleanProperty.create("assembled");
     public static final BooleanProperty POWERED = BlockStateProperties.POWERED;
+
+
+
     public AbstractPistonBlock(Properties properties) {
         super(properties);
 
@@ -42,7 +50,7 @@ public abstract class AbstractPistonBlock extends DirectionalKineticBlock implem
         super.createBlockStateDefinition(builder.add(ASSEMBLED).add(POWERED));
     }
     @Override
-    protected ItemInteractionResult useItemOn(final ItemStack itemStack, final BlockState blockState, final Level level, final BlockPos blockPos, final Player player, final InteractionHand interactionHand, final BlockHitResult blockHitResult) {
+    protected @NotNull ItemInteractionResult useItemOn(final ItemStack itemStack, final BlockState blockState, final Level level, final BlockPos blockPos, final Player player, final InteractionHand interactionHand, final BlockHitResult blockHitResult) {
         if (!player.mayBuild()) {
             return ItemInteractionResult.FAIL;
         }
@@ -55,6 +63,7 @@ public abstract class AbstractPistonBlock extends DirectionalKineticBlock implem
             if (level.isClientSide) {
                 return ItemInteractionResult.SUCCESS;
             }
+
 
             this.withBlockEntityDo(level, blockPos, be -> be.assembleNextTick = be.isController());
             return ItemInteractionResult.SUCCESS;
@@ -96,7 +105,24 @@ public abstract class AbstractPistonBlock extends DirectionalKineticBlock implem
 
     @Override
     public void onPlace(BlockState state, Level worldIn, BlockPos pos, BlockState oldState, boolean isMoving) {
-        this.getBlockEntity(worldIn, pos).setController();
         super.onPlace(state, worldIn, pos, oldState, isMoving);
+        AbstractPistonBlockEntity abstractPistonBlockEntity = this.getBlockEntity(worldIn, pos);
+        abstractPistonBlockEntity.setController();
+
     }
+
+
+
+    @Override
+    public void onRemove(BlockState pState, Level pLevel, BlockPos pPos, BlockState pNewState, boolean pIsMoving) {
+        if (pLevel.getBlockEntity(pPos.relative(pState.getValue(AbstractPistonBlock.FACING).getOpposite())) instanceof AbstractPistonBlockEntity abstractPistonBlockEntity) {
+            abstractPistonBlockEntity.setController();
+        }
+        if (pLevel.getBlockEntity(pPos.relative(pState.getValue(AbstractPistonBlock.FACING))) instanceof AbstractPistonBlockEntity abstractPistonBlockEntity) {
+            abstractPistonBlockEntity.setController();
+        }
+        super.onRemove(pState, pLevel, pPos, pNewState, pIsMoving);
+    }
+
+
 }
