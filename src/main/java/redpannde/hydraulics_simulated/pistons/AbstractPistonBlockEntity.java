@@ -286,6 +286,8 @@ public abstract class AbstractPistonBlockEntity extends KineticBlockEntity imple
     }
 
     public void setPistonLength(int length) {
+        this.targetLength = Math.clamp(this.targetLength, -length, length);
+        this.lastTargetLength = Math.clamp(this.lastTargetLength, -length, length);
         this.pistonLength = length;
     }
 
